@@ -1,0 +1,7 @@
+FFMPEG_PATH = "ffmpeg"
+# Другие возможные константы
+DEFAULT_FRAMERATE = 25
+DEFAULT_VIDEO_PRESET = "ultrafast"
+DEFAULT_VIDEO_CRF = "23"
+DEFAULT_AUDIO_CODEC = "aac"
+DEFAULT_AUDIO_BITRATE = "192k"
