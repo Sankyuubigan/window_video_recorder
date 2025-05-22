@@ -25,7 +25,7 @@ FFMPEG_PATH = ffmpeg_exe_path
 print(f"[Config] Установлен путь к FFmpeg: {FFMPEG_PATH}")
 
 DEFAULT_FRAMERATE = 25 
-DEFAULT_VIDEO_PRESET = "ultrafast"
-DEFAULT_VIDEO_CRF = "23" 
+DEFAULT_VIDEO_PRESET = "fast"
+DEFAULT_VIDEO_CRF = "28" 
 DEFAULT_AUDIO_CODEC = "aac"
 DEFAULT_AUDIO_BITRATE = "192k"

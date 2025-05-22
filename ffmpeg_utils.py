@@ -118,16 +118,24 @@ def run_ffmpeg_recording_from_pipe(output_file,
             audio_output_labels_from_asetpts.append(f"[aud{i}]")
             current_ffmpeg_input_index += 1
         
-        filter_complex_parts = []
+        filter_complex_parts = [] 
+        audio_resampled_labels = [] # New list for labels after resampling
+
         for i in range(audio_inputs_count):
-            filter_complex_parts.append(f"{audio_input_streams_for_filter[i]}asetpts=PTS-STARTPTS{audio_output_labels_from_asetpts[i]}")
-        
-        streams_to_process_further = "".join(audio_output_labels_from_asetpts)
+            resampled_label = f"[ars{i}]" # Unique label for the output of aresample
+            # Apply asetpts, then aresample. Note the comma separating filters in a chain.
+            filter_complex_parts.append(f"{audio_input_streams_for_filter[i]}asetpts=PTS-STARTPTS,aresample=async=1:min_hard_comp=0.100000:first_pts=0{resampled_label}")
+            audio_resampled_labels.append(resampled_label)
+    
+        # Use the new resampled labels for further processing
+        streams_to_process_further = "".join(audio_resampled_labels)
             
         if audio_inputs_count == 1:
-            filter_complex_parts.append(f"{audio_output_labels_from_asetpts[0]}acopy[a_out]")
+            # The single resampled stream is directly copied
+            filter_complex_parts.append(f"{audio_resampled_labels[0]}acopy[a_out]")
         elif audio_inputs_count > 1:
             weights_str = " ".join(["1"] * audio_inputs_count)
+            # Mix the resampled streams
             filter_complex_parts.append(f"{streams_to_process_further}amix=inputs={audio_inputs_count}:duration=first:dropout_transition=2:weights=\"{weights_str}\"[a_out]")
         
         command.extend(['-filter_complex', ";".join(filter_complex_parts)])
@@ -135,7 +143,6 @@ def run_ffmpeg_recording_from_pipe(output_file,
         command.extend([
             '-c:a', DEFAULT_AUDIO_CODEC, 
             '-b:a', DEFAULT_AUDIO_BITRATE,
-            '-async', '1', # Возвращаем -async 1 для аудио
             '-ac', '2', 
         ])
     else: 

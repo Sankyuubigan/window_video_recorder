@@ -39,11 +39,13 @@ class ScreenRecorderApp:
         except Exception as e: print(f"[AppGUI] Не удалось установить иконку окна: {e}")
             
         master.title("Video Recorder v0.16.0 (Triple Audio Input)") 
-        master.geometry("700x480") # Немного увеличим высоту для нового поля
+        master.geometry("700x510") # Немного увеличим высоту для нового поля
         self.is_recording = False; self.prevent_minimize_thread = None; self.recording_thread = None
         self.capture_thread_obj = None; self.ffmpeg_process = None; self.ffmpeg_stderr_thread = None 
         self.stop_event = threading.Event(); self.selected_hwnd = None; self.window_titles_map = {}
-        self.audio_devices = []; self.current_output_file = ""; self.window_capturer = None 
+        self.audio_devices = []; self.current_output_file = ""; self.window_capturer = None
+        self.start_time = None
+        self.timer_id = None
         self._setup_gui(); self.populate_window_list(); self.populate_audio_device_lists(); master.protocol("WM_DELETE_WINDOW", self.on_closing)
 
     def _setup_gui(self):
@@ -86,7 +88,23 @@ class ScreenRecorderApp:
         
         self.status_label = tk.Label(self.master, text="Статус: Ожидание", relief=tk.SUNKEN, anchor="w")
         self.status_label.grid(row=row_idx, column=0, columnspan=3, padx=5, pady=5, sticky="ew")
+        row_idx += 1
+        
+        self.timer_label = tk.Label(self.master, text="Время записи: 00:00:00", relief=tk.FLAT, anchor="w")
+        self.timer_label.grid(row=row_idx, column=0, columnspan=3, padx=5, pady=5, sticky="ew")
+        
         self.master.grid_columnconfigure(1, weight=1)
+
+    def _update_timer(self):
+        if not self.is_recording or self.start_time is None:
+            return
+        elapsed = int(time.time() - self.start_time)
+        hours = elapsed // 3600
+        minutes = (elapsed % 3600) // 60
+        seconds = elapsed % 60
+        formatted_time = f"{hours:02}:{minutes:02}:{seconds:02}"
+        self.timer_label.config(text=f"Время записи: {formatted_time}")
+        self.timer_id = self.master.after(1000, self._update_timer)
 
     def toggle_recording(self):
         if self.is_recording: self.stop_recording()
@@ -386,8 +404,12 @@ class ScreenRecorderApp:
             self.stop_event.set(); 
             if self.prevent_minimize_thread and self.prevent_minimize_thread.is_alive(): self.prevent_minimize_thread.join(timeout=0.5)
             return
+
+        self.start_time = time.time() # Moved here, before self.is_recording = True
+        self.timer_label.config(text="Время записи: 00:00:00")
         
         self.is_recording = True; self._update_gui_for_recording_state(True) 
+        self._update_timer() # Start timer after is_recording is true and GUI is updated
         
         # Формируем список устройств для передачи в _run_recording_thread
         # None будет передан, если выбрано NO_AUDIO_DEVICE_SELECTED
@@ -424,8 +446,20 @@ class ScreenRecorderApp:
         if self.is_recording: print("[AppGUI] stop_recording_logic_if_needed: Обновляем GUI."); 
         if not self.stop_event.is_set(): self.stop_event.set(); self.stop_recording_logic() 
 
-    def stop_recording_logic(self): # (без изменений)
-        print("[AppGUI] Вызвана stop_recording_logic"); self.is_recording = False; self._update_gui_for_recording_state(False); 
+    def stop_recording_logic(self): 
+        print("[AppGUI] Вызвана stop_recording_logic"); 
+        
+        if self.timer_id is not None:
+            self.master.after_cancel(self.timer_id)
+            self.timer_id = None
+        self.start_time = None
+        # It's good to reset the label here or ensure _update_gui_for_recording_state handles it.
+        # If _update_gui_for_recording_state doesn't reset it, uncomment the line below.
+        # self.timer_label.config(text="Время записи: 00:00:00") 
+
+        self.is_recording = False # Moved after timer cancellation
+        self._update_gui_for_recording_state(False); 
+
         if self.capture_thread_obj and self.capture_thread_obj.is_alive(): print("[AppGUI] stop_recording_logic: Поток захвата жив, ожидание..."); self.capture_thread_obj.join(timeout=1) 
         if self.ffmpeg_stderr_thread and self.ffmpeg_stderr_thread.is_alive(): print("[AppGUI] stop_recording_logic: Поток stderr FFmpeg жив, ожидание..."); self.ffmpeg_stderr_thread.join(timeout=1)
         if self.window_capturer:
