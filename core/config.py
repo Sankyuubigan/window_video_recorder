@@ -25,7 +25,30 @@ FFMPEG_PATH = ffmpeg_exe_path
 print(f"[Config] Установлен путь к FFmpeg: {FFMPEG_PATH}")
 
 DEFAULT_FRAMERATE = 25 
-DEFAULT_VIDEO_PRESET = "ultrafast"
-DEFAULT_VIDEO_CRF = "23" 
+DEFAULT_VIDEO_PRESET = "medium" 
+DEFAULT_VIDEO_CRF = "28"      
 DEFAULT_AUDIO_CODEC = "aac"
-DEFAULT_AUDIO_BITRATE = "192k"
+DEFAULT_AUDIO_BITRATE = "128k"
+
+CONTROL_MASK = 0x0004 # Control key
+
+APP_NAME_FOR_SETTINGS = "VideoConfRecorder"
+if sys.platform == "win32":
+    SETTINGS_DIR_BASE = os.getenv('APPDATA')
+elif sys.platform == "darwin": 
+    SETTINGS_DIR_BASE = os.path.join(os.path.expanduser('~'), 'Library', 'Application Support')
+else: 
+    SETTINGS_DIR_BASE = os.getenv('XDG_CONFIG_HOME') or os.path.join(os.path.expanduser('~'), '.config')
+
+if SETTINGS_DIR_BASE:
+    APP_SETTINGS_DIR = os.path.join(SETTINGS_DIR_BASE, APP_NAME_FOR_SETTINGS)
+else: 
+    APP_SETTINGS_DIR = os.path.join(os.path.expanduser('~'), f'.{APP_NAME_FOR_SETTINGS.lower()}_settings')
+
+DEFAULT_SETTINGS_FILE_NAME = "settings.json"
+
+CAPTURE_METHOD_GDI = "GDI" # Оставим, если вдруг понадобится вернуться к старому коду
+CAPTURE_METHOD_WGC = "WGC" # Оставим, если вдруг понадобится вернуться к старому коду
+
+# Новая константа
+NO_AUDIO_DEVICE_SELECTED = "<Нет>" 

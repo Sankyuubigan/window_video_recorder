@@ -1,0 +1,7 @@
+opencv-python
+numpy
+pywin32
+winsdk>=1.0.0b9
+psutil
+mss
+ffmpeg-python
