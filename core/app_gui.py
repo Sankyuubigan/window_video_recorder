@@ -9,7 +9,7 @@ import sys
 
 from windows_utils import get_active_windows, prevent_minimize_loop, get_window_rect, prevent_resize_loop
 from ffmpeg_utils import get_dshow_audio_devices
-from config import DEFAULT_FRAMERATE, FFMPEG_PATH, NO_AUDIO_DEVICE_SELECTED 
+from config import DEFAULT_FRAMERATE, FFMPEG_PATH, NO_AUDIO_DEVICE_SELECTED, APP_ICON_PATH 
 from settings_manager import load_settings, save_settings
 from log_viewer import LogViewerWindow, GLOBAL_LOG_BUFFER
 from gui_widgets import RecordingTimer, setup_entry_clipboard_shortcuts
@@ -24,36 +24,16 @@ class ScreenRecorderApp:
         self.log_message(f"[AppGUI] Используется метод захвата GDI (PrintWindow) + FFmpeg-Python.")
         
         try: 
-            final_icon_path = None; current_script_dir = os.path.dirname(os.path.abspath(__file__)); icon_name = "app_icon.ico"
-            if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
-                base_path_frozen = sys._MEIPASS; icon_path_in_meipass = os.path.join(base_path_frozen, icon_name)
-                if os.path.exists(icon_path_in_meipass): final_icon_path = icon_path_in_meipass
-                else:
-                    executable_dir = os.path.dirname(sys.executable)
-                    icon_path_near_executable = os.path.join(executable_dir, icon_name)
-                    if os.path.exists(icon_path_near_executable): final_icon_path = icon_path_near_executable
+            if APP_ICON_PATH and os.path.exists(APP_ICON_PATH):
+                master.iconbitmap(default=APP_ICON_PATH)
+                self.log_message(f"[AppGUI] Иконка установлена из: {APP_ICON_PATH}")
             else:
-                project_root_from_core = os.path.dirname(current_script_dir) 
-                icon_path_source_relative_to_core = os.path.join(project_root_from_core, icon_name) 
-                if os.path.exists(icon_path_source_relative_to_core): final_icon_path = icon_path_source_relative_to_core
-                else: 
-                    icon_path_in_core_dir = os.path.join(current_script_dir, icon_name)
-                    if os.path.exists(icon_path_in_core_dir): final_icon_path = icon_path_in_core_dir
-            if final_icon_path and os.path.exists(final_icon_path):
-                master.iconbitmap(default=final_icon_path); self.log_message(f"[AppGUI] Иконка установлена из: {final_icon_path}")
-            else:
-                paths_checked_log = []
-                if getattr(sys, 'frozen', False):
-                    paths_checked_log.append(f"MEIPASS: {os.path.join(getattr(sys, '_MEIPASS', 'N/A'), icon_name)}")
-                    paths_checked_log.append(f"ExecutableDir: {os.path.join(os.path.dirname(sys.executable), icon_name)}")
-                else:
-                    paths_checked_log.append(f"../{icon_name}: {os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), icon_name)}")
-                    paths_checked_log.append(f"./{icon_name}: {os.path.join(os.path.dirname(os.path.abspath(__file__)), icon_name)}")
-                self.log_message(f"[AppGUI] Иконка '{icon_name}' не найдена. Проверенные пути: {'; '.join(paths_checked_log)}")
-        except Exception as e: self.log_message(f"[AppGUI] Ошибка при установке иконки: {e}")
+                self.log_message(f"[AppGUI] Иконка не найдена (путь из config: {APP_ICON_PATH}). Будет использована иконка по умолчанию.")
+        except Exception as e:
+            self.log_message(f"[AppGUI] Ошибка при установке иконки: {e}")
         
         master.title("Video Recorder v0.27 (Multi-Audio Test)") 
-        master.geometry("700x500") # Немного увеличим, если нужно будет больше места для аудио
+        master.geometry("700x500")
         
         self.is_recording = False
         self.prevent_minimize_thread = None; self.prevent_minimize_stop_event = None
@@ -122,11 +102,6 @@ class ScreenRecorderApp:
         tk.Label(self.master, text="Папка:").grid(row=r, column=0, padx=5, pady=5, sticky="w")
         self.output_dir_entry = tk.Entry(self.master, width=75); self.output_dir_entry.grid(row=r, column=1, padx=5, pady=5, sticky="ew"); setup_entry_clipboard_shortcuts(self.output_dir_entry)
         self.browse_button = tk.Button(self.master, text="Обзор...", command=self.select_output_directory); self.browse_button.grid(row=r, column=2, padx=5, pady=5); r+=1
-        
-        # Убираем надпись "будет использовано ПЕРВОЕ активное аудиоустройство"
-        # audio_notice = "Запись звука: будет использовано ПЕРВОЕ активное аудиоустройство."; 
-        # tk.Label(self.master, text=audio_notice, fg="blue").grid(row=r, column=0, columnspan=3, padx=5, pady=2, sticky="w"); r+=1
-        
         tk.Label(self.master, text="Микрофон:").grid(row=r, column=0, padx=5, pady=5, sticky="w")
         self.mic_device_combo = ttk.Combobox(self.master, width=75, state="readonly"); self.mic_device_combo.grid(row=r, column=1, padx=5, pady=5, sticky="ew"); r+=1
         tk.Label(self.master, text="Звук Sys1:").grid(row=r, column=0, padx=5, pady=5, sticky="w")
@@ -134,7 +109,6 @@ class ScreenRecorderApp:
         tk.Label(self.master, text="Звук Sys2:").grid(row=r, column=0, padx=5, pady=5, sticky="w")
         self.system_audio_device_combo2 = ttk.Combobox(self.master, width=75, state="readonly"); self.system_audio_device_combo2.grid(row=r, column=1, padx=5, pady=5, sticky="ew")
         self.refresh_audio_button = tk.Button(self.master, text="Обновить Аудио", command=self.populate_audio_device_lists); self.refresh_audio_button.grid(row=r-2, column=2, rowspan=3, padx=5, pady=5, sticky="ns"); r+=1
-        
         self.record_button = tk.Button(self.master, text="Начать запись", command=self.toggle_recording, bg="lightgreen", height=2); self.record_button.grid(row=r, column=0, columnspan=2, padx=5, pady=15, sticky="ew")
         self.timer_label = tk.Label(self.master, text="00:00:00", font=("Arial",16), relief=tk.SUNKEN, anchor="center"); 
         self.timer_label.grid(row=r, column=2, padx=5, pady=15, sticky="ewns")
@@ -145,6 +119,7 @@ class ScreenRecorderApp:
         self.show_logs_button = tk.Button(s_frame, text="Логи", command=self.show_log_window); self.show_logs_button.grid(row=0,column=1,sticky="e",padx=(5,0)); self.master.grid_columnconfigure(1,weight=1)
 
     def _load_app_settings(self):
+        # ... (без изменений) ...
         self.log_message("[AppGUI] Загрузка настроек...")
         self.settings = load_settings(logger_func=self.log_message)
         if self.settings: 
@@ -157,6 +132,7 @@ class ScreenRecorderApp:
         self.log_message("[AppGUI] Настройки применены (если были).")
 
     def _save_app_settings(self):
+        # ... (без изменений) ...
         self.log_message("[AppGUI] Сохранение настроек...")
         settings_to_save = { 
             "output_directory": self.output_dir_entry.get(), 
@@ -168,20 +144,20 @@ class ScreenRecorderApp:
         save_settings(settings_to_save, self.log_message)
 
     def toggle_recording(self): 
+        # ... (без изменений) ...
         if self.is_recording: self.stop_recording()
         else: self.start_recording_async()
 
     def populate_window_list(self):
-        # ... (без изменений)
+        # ... (без изменений) ...
         self.window_combo['values']=[]; self.window_titles_map=get_active_windows(); st=sorted(self.window_titles_map.keys()); self.window_combo['values']=st
         swt=self.settings.get("selected_window_title") if self.settings else None
         if swt and swt in st: self.window_combo.set(swt)
         elif st: self.window_combo.current(0)
         if not self.is_recording: self.status_label.config(text="Статус: Окна обновлены."); self.log_message("[AppGUI] Окна обновлены.")
 
-
     def populate_audio_device_lists(self):
-        # ... (без изменений)
+        # ... (без изменений) ...
         self.log_message("[AppGUI] Обновление аудио..."); 
         if not self.is_recording: self.status_label.config(text="Статус: Обновление аудио...")
         self.master.update_idletasks(); rad=get_dshow_audio_devices(self.log_message); self.log_message(f"[AppGUI] Найдено аудио: {rad}")
@@ -213,16 +189,15 @@ class ScreenRecorderApp:
         if not self.is_recording: self.status_label.config(text="Статус: Аудио обновлены."); self.log_message("[AppGUI] Аудио обновлены.")
         if not rad and not self.is_recording: self.status_label.config(text="Статус: Аудио не найдены."); messagebox.showwarning("Аудио", "Аудиоустройства DirectShow не найдены.", parent=self.master)
 
-
     def select_output_directory(self):
-        # ... (без изменений)
+        # ... (без изменений) ...
         initial_dir_val = self.output_dir_entry.get()
         if not initial_dir_val or not os.path.isdir(initial_dir_val): initial_dir_val = os.path.expanduser("~") 
         dp=filedialog.askdirectory(initialdir=initial_dir_val, parent=self.master)
         if dp: self.output_dir_entry.delete(0,tk.END); self.output_dir_entry.insert(0,dp)
 
     def _perform_recording_logic(self):
-        # ... (без изменений)
+        # ... (без изменений) ...
         success_start, error_msg_start = self.recorder_instance.start() 
         if success_start:
             self.log_message("[AppGUI] FFmpegRecorder успешно запущен.")
@@ -237,13 +212,13 @@ class ScreenRecorderApp:
             self.recorder_instance = None 
 
     def _update_status_recording_in_progress(self):
-        # ... (без изменений)
+        # ... (без изменений) ...
         if self.is_recording: 
             if self.current_output_file: self.status_label.config(text=f"Статус: Запись в {os.path.basename(self.current_output_file)}...")
             else: self.status_label.config(text="Статус: Идет запись...")
 
     def _handle_recording_result(self, success, message):
-        # ... (без изменений)
+        # ... (без изменений) ...
         self.log_message(f"[AppGUI] Результат записи: Успех={success}, Сообщение='{message}'")
         final_status_message = ""
         if not success: 
@@ -262,50 +237,34 @@ class ScreenRecorderApp:
 
 
     def start_recording_async(self):
+        # ... (изменено имя файла) ...
         if self.is_recording: self.log_message("[AppGUI] Попытка начать запись, когда уже идет запись."); return
-        
         selected_window_title_str = self.window_combo.get(); output_dir_str = self.output_dir_entry.get()
-        
-        # Собираем список активных аудиоустройств
-        mic_dev = self.mic_device_combo.get()
-        sys_audio1_dev = self.system_audio_device_combo1.get()
-        sys_audio2_dev = self.system_audio_device_combo2.get()
-        
+        mic_dev = self.mic_device_combo.get(); sys_audio1_dev = self.system_audio_device_combo1.get(); sys_audio2_dev = self.system_audio_device_combo2.get()
         selected_audio_devices_list = []
         if mic_dev != NO_AUDIO_DEVICE_SELECTED: selected_audio_devices_list.append(mic_dev)
         if sys_audio1_dev != NO_AUDIO_DEVICE_SELECTED: selected_audio_devices_list.append(sys_audio1_dev)
         if sys_audio2_dev != NO_AUDIO_DEVICE_SELECTED: selected_audio_devices_list.append(sys_audio2_dev)
-        
-        # Удаляем дубликаты, сохраняя порядок (важно, если пользователь выбрал одно и то же устройство в разных слотах)
-        # Это не самый эффективный способ, но для 3 элементов подойдет.
-        unique_selected_audio_devices = []
-        for item in selected_audio_devices_list:
-            if item not in unique_selected_audio_devices:
-                unique_selected_audio_devices.append(item)
+        unique_selected_audio_devices = []; [unique_selected_audio_devices.append(item) for item in selected_audio_devices_list if item not in unique_selected_audio_devices]
         selected_audio_devices_list = unique_selected_audio_devices
-
         if not selected_window_title_str: messagebox.showerror("Ошибка","Выберите окно.",parent=self.master); return
         if not output_dir_str or not os.path.isdir(output_dir_str): messagebox.showerror("Ошибка",f"Папка '{output_dir_str}' некорректна.",parent=self.master); return
-        
         self.selected_hwnd = self.window_titles_map.get(selected_window_title_str)
         if not self.selected_hwnd or not win32gui.IsWindow(self.selected_hwnd): 
             messagebox.showerror("Ошибка",f"Окно '{selected_window_title_str}' больше не существует или невалидно.", parent=self.master)
             self.populate_window_list(); return
-        
-        if not selected_audio_devices_list: # Если список пуст
+        if not selected_audio_devices_list: 
             if not messagebox.askyesno("Предупреждение","Аудиоустройства не выбраны. Продолжить запись без звука?", parent=self.master): return
             self.log_message("[AppGUI] Запись будет без звука (пользователь подтвердил).")
-        else: 
-            self.log_message(f"[AppGUI] Выбранные аудиоустройства для записи: {selected_audio_devices_list}")
+        else: self.log_message(f"[AppGUI] Выбранные аудиоустройства для записи: {selected_audio_devices_list}")
         
-        self.current_output_file = os.path.join(output_dir_str, f"record_{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.mp4")
+        # Измененный формат имени файла: record_ГГ-ММ-ДД.mp4
+        self.current_output_file = os.path.join(output_dir_str, f"record_{datetime.datetime.now().strftime('%y-%m-%d')}.mp4")
+        
         self.log_message(f"[AppGUI] Запуск GDI Recorder для '{selected_window_title_str}' (HWND: {self.selected_hwnd}) -> '{self.current_output_file}'")
-        
         self.recorder_instance = FFmpegRecorder(
-            hwnd=self.selected_hwnd, 
-            output_file=self.current_output_file, 
-            audio_device_names_list=selected_audio_devices_list, # Передаем список
-            framerate=DEFAULT_FRAMERATE, 
+            hwnd=self.selected_hwnd, output_file=self.current_output_file, 
+            audio_device_names_list=selected_audio_devices_list, framerate=DEFAULT_FRAMERATE, 
             logger_func=self.log_message,
             on_critical_error_callback=lambda err_msg: self.master.after(0, self._handle_critical_error_from_recorder, err_msg)
         )
