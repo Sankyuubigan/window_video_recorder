@@ -23,7 +23,6 @@ class ScreenRecorderApp:
         self.log_message(f"Приложение запущено. Python {sys.version}")
         self.log_message(f"[AppGUI] Используется метод захвата GDI (PrintWindow) + FFmpeg-Python.")
         
-        # ... (код иконки без изменений) ...
         try: 
             final_icon_path = None; current_script_dir = os.path.dirname(os.path.abspath(__file__)); icon_name = "app_icon.ico"
             if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
@@ -53,29 +52,19 @@ class ScreenRecorderApp:
                 self.log_message(f"[AppGUI] Иконка '{icon_name}' не найдена. Проверенные пути: {'; '.join(paths_checked_log)}")
         except Exception as e: self.log_message(f"[AppGUI] Ошибка при установке иконки: {e}")
         
-        master.title("Video Recorder v0.26 (GDI + FFmpeg-Python)") 
-        master.geometry("700x500")
+        master.title("Video Recorder v0.27 (Multi-Audio Test)") 
+        master.geometry("700x500") # Немного увеличим, если нужно будет больше места для аудио
         
         self.is_recording = False
-        self.prevent_minimize_thread = None
-        self.prevent_minimize_stop_event = None # Добавляем событие
-        self.prevent_resize_thread = None     # Для защиты от изменения размера
-        self.prevent_resize_stop_event = None # Событие для него
-        self.initial_target_window_rect = None # Для хранения исходных размеров окна
+        self.prevent_minimize_thread = None; self.prevent_minimize_stop_event = None
+        self.prevent_resize_thread = None; self.prevent_resize_stop_event = None
+        self.initial_target_window_rect = None 
 
-        self.recording_logic_thread = None 
-        self.recorder_instance = None 
-        self.selected_hwnd = None
-        self.window_titles_map = {}
-        self.audio_devices = []
-        self.current_output_file = ""
-        self.recording_timer = None 
-        self.settings = {} 
+        self.recording_logic_thread = None; self.recorder_instance = None 
+        self.selected_hwnd = None; self.window_titles_map = {}
+        self.audio_devices = []; self.current_output_file = ""; self.recording_timer = None; self.settings = {} 
         
-        self._setup_gui()
-        self._load_app_settings()
-        self.populate_window_list()
-        self.populate_audio_device_lists()
+        self._setup_gui(); self._load_app_settings(); self.populate_window_list(); self.populate_audio_device_lists()
         master.protocol("WM_DELETE_WINDOW", self.on_closing)
 
     def _handle_critical_error_from_recorder(self, error_message):
@@ -89,58 +78,34 @@ class ScreenRecorderApp:
                 messagebox.showerror("Критическая ошибка записи", 
                                      f"Запись была прервана из-за ошибки:\n{error_message}\n\nПожалуйста, проверьте логи.", 
                                      parent=self.master)
-            self._stop_window_protection_threads() # Останавливаем оба потока защиты
+            self._stop_window_protection_threads() 
             self.recorder_instance = None 
             self.current_output_file = ""
         else:
             self.log_message("[AppGUI CRITICAL_CALLBACK] Запись уже не была активна.")
 
     def _start_window_protection_threads(self, hwnd):
-        # Останавливаем предыдущие, если активны
         self._stop_window_protection_threads()
-
-        # Защита от сворачивания
         self.prevent_minimize_stop_event = threading.Event()
-        self.prevent_minimize_thread = threading.Thread(
-            target=prevent_minimize_loop, 
-            args=(hwnd, self.prevent_minimize_stop_event, self.log_message), 
-            daemon=True
-        )
+        self.prevent_minimize_thread = threading.Thread(target=prevent_minimize_loop, args=(hwnd, self.prevent_minimize_stop_event, self.log_message), daemon=True)
         self.prevent_minimize_thread.start()
-
-        # Защита от изменения размера
-        self.initial_target_window_rect = get_window_rect(hwnd) # Запоминаем текущие экранные координаты
-        if self.initial_target_window_rect == (0,0,0,0) and win32gui.IsWindow(hwnd): # Если GetWindowRect вернул 0,0,0,0 для валидного окна
+        self.initial_target_window_rect = get_window_rect(hwnd) 
+        if self.initial_target_window_rect == (0,0,0,0) and win32gui.IsWindow(hwnd):
             self.log_message(f"[AppGUI] ВНИМАНИЕ: GetWindowRect для HWND {hwnd} вернул (0,0,0,0). Защита от изменения размера может работать некорректно.")
-            # Можно попробовать использовать GetClientRect и преобразовать в экранные, но это сложнее
-            # или просто не запускать защиту от изменения размера в этом случае.
-            # Пока оставим так, но это потенциальная точка отказа для некоторых окон.
-
         self.prevent_resize_stop_event = threading.Event()
-        self.prevent_resize_thread = threading.Thread(
-            target=prevent_resize_loop,
-            args=(hwnd, self.initial_target_window_rect, self.prevent_resize_stop_event, self.log_message),
-            daemon=True
-        )
+        self.prevent_resize_thread = threading.Thread(target=prevent_resize_loop,args=(hwnd, self.initial_target_window_rect, self.prevent_resize_stop_event, self.log_message),daemon=True)
         self.prevent_resize_thread.start()
 
     def _stop_window_protection_threads(self):
         if self.prevent_minimize_thread and self.prevent_minimize_thread.is_alive():
             if self.prevent_minimize_stop_event: self.prevent_minimize_stop_event.set()
-            # self.prevent_minimize_thread.join(timeout=0.5) # Короткий таймаут, чтобы не блокировать GUI
-        self.prevent_minimize_thread = None
-        self.prevent_minimize_stop_event = None
-
+        self.prevent_minimize_thread = None; self.prevent_minimize_stop_event = None
         if self.prevent_resize_thread and self.prevent_resize_thread.is_alive():
             if self.prevent_resize_stop_event: self.prevent_resize_stop_event.set()
-            # self.prevent_resize_thread.join(timeout=0.5)
-        self.prevent_resize_thread = None
-        self.prevent_resize_stop_event = None
+        self.prevent_resize_thread = None; self.prevent_resize_stop_event = None
         self.initial_target_window_rect = None
 
-
     def log_message(self, message):
-        # ... (без изменений) ...
         ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
         fm = f"[{ts}] {message}"; print(fm) 
         if hasattr(self, 'log_viewer_instance') and self.log_viewer_instance and self.log_viewer_instance.log_window.winfo_exists(): 
@@ -150,7 +115,6 @@ class ScreenRecorderApp:
             while len(self.log_buffer) > 2000: self.log_buffer.pop(0)
 
     def _setup_gui(self):
-        # ... (без изменений) ...
         r = 0
         tk.Label(self.master, text="Окно:").grid(row=r, column=0, padx=5, pady=5, sticky="w")
         self.window_combo = ttk.Combobox(self.master, width=75, state="readonly"); self.window_combo.grid(row=r, column=1, padx=5, pady=5, sticky="ew")
@@ -158,7 +122,11 @@ class ScreenRecorderApp:
         tk.Label(self.master, text="Папка:").grid(row=r, column=0, padx=5, pady=5, sticky="w")
         self.output_dir_entry = tk.Entry(self.master, width=75); self.output_dir_entry.grid(row=r, column=1, padx=5, pady=5, sticky="ew"); setup_entry_clipboard_shortcuts(self.output_dir_entry)
         self.browse_button = tk.Button(self.master, text="Обзор...", command=self.select_output_directory); self.browse_button.grid(row=r, column=2, padx=5, pady=5); r+=1
-        audio_notice = "Запись звука: будет использовано ПЕРВОЕ активное аудиоустройство."; tk.Label(self.master, text=audio_notice, fg="blue").grid(row=r, column=0, columnspan=3, padx=5, pady=2, sticky="w"); r+=1
+        
+        # Убираем надпись "будет использовано ПЕРВОЕ активное аудиоустройство"
+        # audio_notice = "Запись звука: будет использовано ПЕРВОЕ активное аудиоустройство."; 
+        # tk.Label(self.master, text=audio_notice, fg="blue").grid(row=r, column=0, columnspan=3, padx=5, pady=2, sticky="w"); r+=1
+        
         tk.Label(self.master, text="Микрофон:").grid(row=r, column=0, padx=5, pady=5, sticky="w")
         self.mic_device_combo = ttk.Combobox(self.master, width=75, state="readonly"); self.mic_device_combo.grid(row=r, column=1, padx=5, pady=5, sticky="ew"); r+=1
         tk.Label(self.master, text="Звук Sys1:").grid(row=r, column=0, padx=5, pady=5, sticky="w")
@@ -166,6 +134,7 @@ class ScreenRecorderApp:
         tk.Label(self.master, text="Звук Sys2:").grid(row=r, column=0, padx=5, pady=5, sticky="w")
         self.system_audio_device_combo2 = ttk.Combobox(self.master, width=75, state="readonly"); self.system_audio_device_combo2.grid(row=r, column=1, padx=5, pady=5, sticky="ew")
         self.refresh_audio_button = tk.Button(self.master, text="Обновить Аудио", command=self.populate_audio_device_lists); self.refresh_audio_button.grid(row=r-2, column=2, rowspan=3, padx=5, pady=5, sticky="ns"); r+=1
+        
         self.record_button = tk.Button(self.master, text="Начать запись", command=self.toggle_recording, bg="lightgreen", height=2); self.record_button.grid(row=r, column=0, columnspan=2, padx=5, pady=15, sticky="ew")
         self.timer_label = tk.Label(self.master, text="00:00:00", font=("Arial",16), relief=tk.SUNKEN, anchor="center"); 
         self.timer_label.grid(row=r, column=2, padx=5, pady=15, sticky="ewns")
@@ -176,7 +145,6 @@ class ScreenRecorderApp:
         self.show_logs_button = tk.Button(s_frame, text="Логи", command=self.show_log_window); self.show_logs_button.grid(row=0,column=1,sticky="e",padx=(5,0)); self.master.grid_columnconfigure(1,weight=1)
 
     def _load_app_settings(self):
-        # ... (без изменений) ...
         self.log_message("[AppGUI] Загрузка настроек...")
         self.settings = load_settings(logger_func=self.log_message)
         if self.settings: 
@@ -189,7 +157,6 @@ class ScreenRecorderApp:
         self.log_message("[AppGUI] Настройки применены (если были).")
 
     def _save_app_settings(self):
-        # ... (без изменений) ...
         self.log_message("[AppGUI] Сохранение настроек...")
         settings_to_save = { 
             "output_directory": self.output_dir_entry.get(), 
@@ -201,20 +168,20 @@ class ScreenRecorderApp:
         save_settings(settings_to_save, self.log_message)
 
     def toggle_recording(self): 
-        # ... (без изменений) ...
         if self.is_recording: self.stop_recording()
         else: self.start_recording_async()
 
     def populate_window_list(self):
-        # ... (без изменений) ...
+        # ... (без изменений)
         self.window_combo['values']=[]; self.window_titles_map=get_active_windows(); st=sorted(self.window_titles_map.keys()); self.window_combo['values']=st
         swt=self.settings.get("selected_window_title") if self.settings else None
         if swt and swt in st: self.window_combo.set(swt)
         elif st: self.window_combo.current(0)
         if not self.is_recording: self.status_label.config(text="Статус: Окна обновлены."); self.log_message("[AppGUI] Окна обновлены.")
 
+
     def populate_audio_device_lists(self):
-        # ... (без изменений) ...
+        # ... (без изменений)
         self.log_message("[AppGUI] Обновление аудио..."); 
         if not self.is_recording: self.status_label.config(text="Статус: Обновление аудио...")
         self.master.update_idletasks(); rad=get_dshow_audio_devices(self.log_message); self.log_message(f"[AppGUI] Найдено аудио: {rad}")
@@ -246,15 +213,16 @@ class ScreenRecorderApp:
         if not self.is_recording: self.status_label.config(text="Статус: Аудио обновлены."); self.log_message("[AppGUI] Аудио обновлены.")
         if not rad and not self.is_recording: self.status_label.config(text="Статус: Аудио не найдены."); messagebox.showwarning("Аудио", "Аудиоустройства DirectShow не найдены.", parent=self.master)
 
+
     def select_output_directory(self):
-        # ... (без изменений) ...
+        # ... (без изменений)
         initial_dir_val = self.output_dir_entry.get()
         if not initial_dir_val or not os.path.isdir(initial_dir_val): initial_dir_val = os.path.expanduser("~") 
         dp=filedialog.askdirectory(initialdir=initial_dir_val, parent=self.master)
         if dp: self.output_dir_entry.delete(0,tk.END); self.output_dir_entry.insert(0,dp)
 
     def _perform_recording_logic(self):
-        # ... (без изменений) ...
+        # ... (без изменений)
         success_start, error_msg_start = self.recorder_instance.start() 
         if success_start:
             self.log_message("[AppGUI] FFmpegRecorder успешно запущен.")
@@ -269,13 +237,13 @@ class ScreenRecorderApp:
             self.recorder_instance = None 
 
     def _update_status_recording_in_progress(self):
-        # ... (без изменений) ...
+        # ... (без изменений)
         if self.is_recording: 
             if self.current_output_file: self.status_label.config(text=f"Статус: Запись в {os.path.basename(self.current_output_file)}...")
             else: self.status_label.config(text="Статус: Идет запись...")
 
     def _handle_recording_result(self, success, message):
-        # ... (без изменений) ...
+        # ... (без изменений)
         self.log_message(f"[AppGUI] Результат записи: Успех={success}, Сообщение='{message}'")
         final_status_message = ""
         if not success: 
@@ -294,27 +262,50 @@ class ScreenRecorderApp:
 
 
     def start_recording_async(self):
-        # ... (добавили запуск _start_window_protection_threads) ...
         if self.is_recording: self.log_message("[AppGUI] Попытка начать запись, когда уже идет запись."); return
+        
         selected_window_title_str = self.window_combo.get(); output_dir_str = self.output_dir_entry.get()
-        mic_dev, sys_audio1_dev, sys_audio2_dev = self.mic_device_combo.get(), self.system_audio_device_combo1.get(), self.system_audio_device_combo2.get()
+        
+        # Собираем список активных аудиоустройств
+        mic_dev = self.mic_device_combo.get()
+        sys_audio1_dev = self.system_audio_device_combo1.get()
+        sys_audio2_dev = self.system_audio_device_combo2.get()
+        
+        selected_audio_devices_list = []
+        if mic_dev != NO_AUDIO_DEVICE_SELECTED: selected_audio_devices_list.append(mic_dev)
+        if sys_audio1_dev != NO_AUDIO_DEVICE_SELECTED: selected_audio_devices_list.append(sys_audio1_dev)
+        if sys_audio2_dev != NO_AUDIO_DEVICE_SELECTED: selected_audio_devices_list.append(sys_audio2_dev)
+        
+        # Удаляем дубликаты, сохраняя порядок (важно, если пользователь выбрал одно и то же устройство в разных слотах)
+        # Это не самый эффективный способ, но для 3 элементов подойдет.
+        unique_selected_audio_devices = []
+        for item in selected_audio_devices_list:
+            if item not in unique_selected_audio_devices:
+                unique_selected_audio_devices.append(item)
+        selected_audio_devices_list = unique_selected_audio_devices
+
         if not selected_window_title_str: messagebox.showerror("Ошибка","Выберите окно.",parent=self.master); return
         if not output_dir_str or not os.path.isdir(output_dir_str): messagebox.showerror("Ошибка",f"Папка '{output_dir_str}' некорректна.",parent=self.master); return
+        
         self.selected_hwnd = self.window_titles_map.get(selected_window_title_str)
         if not self.selected_hwnd or not win32gui.IsWindow(self.selected_hwnd): 
             messagebox.showerror("Ошибка",f"Окно '{selected_window_title_str}' больше не существует или невалидно.", parent=self.master)
             self.populate_window_list(); return
-        first_active_audio_device = next((dev for dev in [mic_dev, sys_audio1_dev, sys_audio2_dev] if dev != NO_AUDIO_DEVICE_SELECTED), None)
-        if not first_active_audio_device:
+        
+        if not selected_audio_devices_list: # Если список пуст
             if not messagebox.askyesno("Предупреждение","Аудиоустройства не выбраны. Продолжить запись без звука?", parent=self.master): return
             self.log_message("[AppGUI] Запись будет без звука (пользователь подтвердил).")
-        else: self.log_message(f"[AppGUI] Выбранное аудиоустройство для записи: {first_active_audio_device}")
+        else: 
+            self.log_message(f"[AppGUI] Выбранные аудиоустройства для записи: {selected_audio_devices_list}")
+        
         self.current_output_file = os.path.join(output_dir_str, f"record_{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.mp4")
         self.log_message(f"[AppGUI] Запуск GDI Recorder для '{selected_window_title_str}' (HWND: {self.selected_hwnd}) -> '{self.current_output_file}'")
         
         self.recorder_instance = FFmpegRecorder(
-            hwnd=self.selected_hwnd, output_file=self.current_output_file, 
-            audio_device_name=first_active_audio_device, framerate=DEFAULT_FRAMERATE, 
+            hwnd=self.selected_hwnd, 
+            output_file=self.current_output_file, 
+            audio_device_names_list=selected_audio_devices_list, # Передаем список
+            framerate=DEFAULT_FRAMERATE, 
             logger_func=self.log_message,
             on_critical_error_callback=lambda err_msg: self.master.after(0, self._handle_critical_error_from_recorder, err_msg)
         )
@@ -326,10 +317,10 @@ class ScreenRecorderApp:
         self._update_gui_for_recording_state(True) 
         self.recording_logic_thread = threading.Thread(target=self._perform_recording_logic, daemon=True); self.recording_logic_thread.start()
         self._save_app_settings()
-        self._start_window_protection_threads(self.selected_hwnd) # Запускаем защиту окна
+        self._start_window_protection_threads(self.selected_hwnd)
 
     def _update_gui_for_recording_state(self, is_starting_or_is_recording): 
-        # ... (без изменений) ...
+        # ... (без изменений)
         bt, bb, widget_state_disabled, widget_state_readonly, status_text_default = \
             ("Остановить запись", "salmon", "disabled", "disabled", "Статус: Ожидание") \
             if is_starting_or_is_recording else \
@@ -353,7 +344,7 @@ class ScreenRecorderApp:
 
 
     def stop_recording(self):
-        # ... (добавили остановку _stop_window_protection_threads) ...
+        # ... (без изменений)
         if not self.is_recording or not self.recorder_instance:
             self.log_message("[AppGUI] stop_recording: запись не активна или нет экземпляра рекордера.")
             if self.is_recording: self.is_recording = False 
@@ -363,9 +354,7 @@ class ScreenRecorderApp:
             return
         self.log_message("[AppGUI] Пользователь остановил запись.")
         self.status_label.config(text="Статус: Остановка записи..."); self.master.update_idletasks()
-        
-        self._stop_window_protection_threads() # Останавливаем защиту окна
-        
+        self._stop_window_protection_threads() 
         error_msg_stop = self.recorder_instance.stop() 
         self.is_recording = False 
         if error_msg_stop: 
@@ -379,7 +368,7 @@ class ScreenRecorderApp:
 
 
     def on_closing(self): 
-        # ... (добавили остановку _stop_window_protection_threads) ...
+        # ... (без изменений)
         close_app = True
         if self.is_recording:
             if not messagebox.askyesno("Запись активна","Выйти? (Запись остановится и будет сохранена)", parent=self.master): 
@@ -388,22 +377,18 @@ class ScreenRecorderApp:
             self.log_message("[AppGUI] Закрытие приложения...")
             if self.is_recording and self.recorder_instance: 
                 self.log_message("[AppGUI] Остановка записи при закрытии...")
-                self.stop_recording() # stop_recording уже вызовет _stop_window_protection_threads
-            
-            # Если потоки защиты все еще активны (например, stop_recording не был вызван)
+                self.stop_recording() 
             self._stop_window_protection_threads() 
-
             if self.recording_logic_thread and self.recording_logic_thread.is_alive():
                 self.log_message("[AppGUI] Ожидание завершения потока логики записи...")
                 self.recording_logic_thread.join(timeout=10) 
                 if self.recording_logic_thread.is_alive():
                      self.log_message("[AppGUI] Поток логики записи не завершился.")
-            
             self._save_app_settings()
             if self.master and self.master.winfo_exists(): self.master.destroy()
 
     def show_log_window(self):
-        # ... (без изменений) ...
+        # ... (без изменений)
         if not self.log_viewer_instance or not self.log_viewer_instance.log_window.winfo_exists():
             parent_for_log = self.master if self.master and self.master.winfo_exists() else None
             if not parent_for_log: return 
