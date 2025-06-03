@@ -7,7 +7,7 @@ import win32gui
 import time 
 import sys  
 
-from windows_utils import get_active_windows, prevent_minimize_loop 
+from windows_utils import get_active_windows, prevent_minimize_loop, get_window_rect, prevent_resize_loop
 from ffmpeg_utils import get_dshow_audio_devices
 from config import DEFAULT_FRAMERATE, FFMPEG_PATH, NO_AUDIO_DEVICE_SELECTED 
 from settings_manager import load_settings, save_settings
@@ -23,6 +23,7 @@ class ScreenRecorderApp:
         self.log_message(f"Приложение запущено. Python {sys.version}")
         self.log_message(f"[AppGUI] Используется метод захвата GDI (PrintWindow) + FFmpeg-Python.")
         
+        # ... (код иконки без изменений) ...
         try: 
             final_icon_path = None; current_script_dir = os.path.dirname(os.path.abspath(__file__)); icon_name = "app_icon.ico"
             if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
@@ -52,55 +53,90 @@ class ScreenRecorderApp:
                 self.log_message(f"[AppGUI] Иконка '{icon_name}' не найдена. Проверенные пути: {'; '.join(paths_checked_log)}")
         except Exception as e: self.log_message(f"[AppGUI] Ошибка при установке иконки: {e}")
         
-        master.title("Video Recorder v0.25 (GDI + FFmpeg-Python)") 
+        master.title("Video Recorder v0.26 (GDI + FFmpeg-Python)") 
         master.geometry("700x500")
         
-        self.is_recording = False; self.prevent_minimize_thread = None; self.recording_logic_thread = None 
-        self.recorder_instance = None; self.selected_hwnd = None; self.window_titles_map = {}
-        self.audio_devices = []; self.current_output_file = ""; self.recording_timer = None; self.settings = {} 
+        self.is_recording = False
+        self.prevent_minimize_thread = None
+        self.prevent_minimize_stop_event = None # Добавляем событие
+        self.prevent_resize_thread = None     # Для защиты от изменения размера
+        self.prevent_resize_stop_event = None # Событие для него
+        self.initial_target_window_rect = None # Для хранения исходных размеров окна
+
+        self.recording_logic_thread = None 
+        self.recorder_instance = None 
+        self.selected_hwnd = None
+        self.window_titles_map = {}
+        self.audio_devices = []
+        self.current_output_file = ""
+        self.recording_timer = None 
+        self.settings = {} 
         
-        self._setup_gui(); self._load_app_settings(); self.populate_window_list(); self.populate_audio_device_lists()
+        self._setup_gui()
+        self._load_app_settings()
+        self.populate_window_list()
+        self.populate_audio_device_lists()
         master.protocol("WM_DELETE_WINDOW", self.on_closing)
 
     def _handle_critical_error_from_recorder(self, error_message):
-        """Callback для FFmpegRecorder при критической ошибке в потоке записи."""
         self.log_message(f"[AppGUI CRITICAL_CALLBACK] Получена ошибка от рекордера: {error_message}")
-        if self.is_recording: # Если запись еще считалась активной
-            self.is_recording = False # Меняем состояние
-            
-            # Останавливаем таймер GUI, если он работает
-            if self.recording_timer and self.recording_timer.is_running:
-                self.recording_timer.stop() 
-            
-            # Обновляем GUI, чтобы разблокировать кнопки и показать ошибку
+        if self.is_recording: 
+            self.is_recording = False 
+            if self.recording_timer and self.recording_timer.is_running: self.recording_timer.stop() 
             self._update_gui_for_recording_state(False) 
             self.status_label.config(text=f"Статус: КРИТ. ОШИБКА ЗАПИСИ ({error_message}).")
-            
-            # Показываем сообщение пользователю
             if self.master and self.master.winfo_exists():
                 messagebox.showerror("Критическая ошибка записи", 
                                      f"Запись была прервана из-за ошибки:\n{error_message}\n\nПожалуйста, проверьте логи.", 
                                      parent=self.master)
-            
-            # Останавливаем поток защиты от сворачивания, если он был запущен
-            if self.prevent_minimize_thread and self.prevent_minimize_thread.is_alive():
-                if hasattr(self, 'prevent_minimize_stop_event'): self.prevent_minimize_stop_event.set()
-                # Не ждем здесь join долго, чтобы не блокировать GUI
-                # self.prevent_minimize_thread.join(timeout=0.1) 
-            self.prevent_minimize_thread = None
-            
-            # Очищаем инстанс рекордера, так как он в невалидном состоянии
-            if self.recorder_instance:
-                # Можно попытаться вызвать "тихий" stop, чтобы он почистил свои процессы, если они еще есть,
-                # но без повторного вызова GUI _handle_recording_result.
-                # Однако, если _video_feed_loop упал, процессы ffmpeg скорее всего уже завершились или завершатся.
-                # self.recorder_instance.stop() # Это вызовет _handle_recording_result снова, не надо.
-                # Вместо этого, просто обнуляем. stop() будет вызван при следующем штатном нажатии Stop или закрытии.
-                pass
+            self._stop_window_protection_threads() # Останавливаем оба потока защиты
             self.recorder_instance = None 
             self.current_output_file = ""
         else:
-            self.log_message("[AppGUI CRITICAL_CALLBACK] Запись уже не была активна, возможно, ошибка обработана ранее.")
+            self.log_message("[AppGUI CRITICAL_CALLBACK] Запись уже не была активна.")
+
+    def _start_window_protection_threads(self, hwnd):
+        # Останавливаем предыдущие, если активны
+        self._stop_window_protection_threads()
+
+        # Защита от сворачивания
+        self.prevent_minimize_stop_event = threading.Event()
+        self.prevent_minimize_thread = threading.Thread(
+            target=prevent_minimize_loop, 
+            args=(hwnd, self.prevent_minimize_stop_event, self.log_message), 
+            daemon=True
+        )
+        self.prevent_minimize_thread.start()
+
+        # Защита от изменения размера
+        self.initial_target_window_rect = get_window_rect(hwnd) # Запоминаем текущие экранные координаты
+        if self.initial_target_window_rect == (0,0,0,0) and win32gui.IsWindow(hwnd): # Если GetWindowRect вернул 0,0,0,0 для валидного окна
+            self.log_message(f"[AppGUI] ВНИМАНИЕ: GetWindowRect для HWND {hwnd} вернул (0,0,0,0). Защита от изменения размера может работать некорректно.")
+            # Можно попробовать использовать GetClientRect и преобразовать в экранные, но это сложнее
+            # или просто не запускать защиту от изменения размера в этом случае.
+            # Пока оставим так, но это потенциальная точка отказа для некоторых окон.
+
+        self.prevent_resize_stop_event = threading.Event()
+        self.prevent_resize_thread = threading.Thread(
+            target=prevent_resize_loop,
+            args=(hwnd, self.initial_target_window_rect, self.prevent_resize_stop_event, self.log_message),
+            daemon=True
+        )
+        self.prevent_resize_thread.start()
+
+    def _stop_window_protection_threads(self):
+        if self.prevent_minimize_thread and self.prevent_minimize_thread.is_alive():
+            if self.prevent_minimize_stop_event: self.prevent_minimize_stop_event.set()
+            # self.prevent_minimize_thread.join(timeout=0.5) # Короткий таймаут, чтобы не блокировать GUI
+        self.prevent_minimize_thread = None
+        self.prevent_minimize_stop_event = None
+
+        if self.prevent_resize_thread and self.prevent_resize_thread.is_alive():
+            if self.prevent_resize_stop_event: self.prevent_resize_stop_event.set()
+            # self.prevent_resize_thread.join(timeout=0.5)
+        self.prevent_resize_thread = None
+        self.prevent_resize_stop_event = None
+        self.initial_target_window_rect = None
 
 
     def log_message(self, message):
@@ -218,7 +254,7 @@ class ScreenRecorderApp:
         if dp: self.output_dir_entry.delete(0,tk.END); self.output_dir_entry.insert(0,dp)
 
     def _perform_recording_logic(self):
-        # ... (без изменений, как было) ...
+        # ... (без изменений) ...
         success_start, error_msg_start = self.recorder_instance.start() 
         if success_start:
             self.log_message("[AppGUI] FFmpegRecorder успешно запущен.")
@@ -226,12 +262,11 @@ class ScreenRecorderApp:
             self.master.after(0, self._update_gui_for_recording_state, True) 
             self.master.after(0, self.recording_timer.start) 
             self.master.after(0, self._update_status_recording_in_progress)
-        else: # Ошибка старта рекордера
+        else: 
             self.log_message(f"[AppGUI] Ошибка запуска FFmpegRecorder: {error_msg_start}")
-            # self.is_recording остается False или должен быть установлен в False
             self.is_recording = False 
             self.master.after(0, self._handle_recording_result, False, error_msg_start)
-            self.recorder_instance = None # Очищаем инстанс, т.к. старт не удался
+            self.recorder_instance = None 
 
     def _update_status_recording_in_progress(self):
         # ... (без изменений) ...
@@ -259,7 +294,7 @@ class ScreenRecorderApp:
 
 
     def start_recording_async(self):
-        # ... (как было, но передаем on_critical_error_callback) ...
+        # ... (добавили запуск _start_window_protection_threads) ...
         if self.is_recording: self.log_message("[AppGUI] Попытка начать запись, когда уже идет запись."); return
         selected_window_title_str = self.window_combo.get(); output_dir_str = self.output_dir_entry.get()
         mic_dev, sys_audio1_dev, sys_audio2_dev = self.mic_device_combo.get(), self.system_audio_device_combo1.get(), self.system_audio_device_combo2.get()
@@ -291,11 +326,7 @@ class ScreenRecorderApp:
         self._update_gui_for_recording_state(True) 
         self.recording_logic_thread = threading.Thread(target=self._perform_recording_logic, daemon=True); self.recording_logic_thread.start()
         self._save_app_settings()
-        if self.prevent_minimize_thread and self.prevent_minimize_thread.is_alive():
-             if hasattr(self, 'prevent_minimize_stop_event'): self.prevent_minimize_stop_event.set()
-             self.prevent_minimize_thread.join(timeout=0.5)
-        self.prevent_minimize_stop_event = threading.Event()
-        self.prevent_minimize_thread = threading.Thread(target=prevent_minimize_loop, args=(self.selected_hwnd, self.prevent_minimize_stop_event, self.log_message), daemon=True); self.prevent_minimize_thread.start()
+        self._start_window_protection_threads(self.selected_hwnd) # Запускаем защиту окна
 
     def _update_gui_for_recording_state(self, is_starting_or_is_recording): 
         # ... (без изменений) ...
@@ -322,7 +353,7 @@ class ScreenRecorderApp:
 
 
     def stop_recording(self):
-        # ... (без изменений) ...
+        # ... (добавили остановку _stop_window_protection_threads) ...
         if not self.is_recording or not self.recorder_instance:
             self.log_message("[AppGUI] stop_recording: запись не активна или нет экземпляра рекордера.")
             if self.is_recording: self.is_recording = False 
@@ -332,10 +363,9 @@ class ScreenRecorderApp:
             return
         self.log_message("[AppGUI] Пользователь остановил запись.")
         self.status_label.config(text="Статус: Остановка записи..."); self.master.update_idletasks()
-        if self.prevent_minimize_thread and self.prevent_minimize_thread.is_alive():
-            if hasattr(self, 'prevent_minimize_stop_event'): self.prevent_minimize_stop_event.set()
-            self.prevent_minimize_thread.join(timeout=1.0) 
-        self.prevent_minimize_thread = None 
+        
+        self._stop_window_protection_threads() # Останавливаем защиту окна
+        
         error_msg_stop = self.recorder_instance.stop() 
         self.is_recording = False 
         if error_msg_stop: 
@@ -349,7 +379,7 @@ class ScreenRecorderApp:
 
 
     def on_closing(self): 
-        # ... (без изменений) ...
+        # ... (добавили остановку _stop_window_protection_threads) ...
         close_app = True
         if self.is_recording:
             if not messagebox.askyesno("Запись активна","Выйти? (Запись остановится и будет сохранена)", parent=self.master): 
@@ -358,16 +388,17 @@ class ScreenRecorderApp:
             self.log_message("[AppGUI] Закрытие приложения...")
             if self.is_recording and self.recorder_instance: 
                 self.log_message("[AppGUI] Остановка записи при закрытии...")
-                self.stop_recording() 
+                self.stop_recording() # stop_recording уже вызовет _stop_window_protection_threads
+            
+            # Если потоки защиты все еще активны (например, stop_recording не был вызван)
+            self._stop_window_protection_threads() 
+
             if self.recording_logic_thread and self.recording_logic_thread.is_alive():
                 self.log_message("[AppGUI] Ожидание завершения потока логики записи...")
                 self.recording_logic_thread.join(timeout=10) 
                 if self.recording_logic_thread.is_alive():
                      self.log_message("[AppGUI] Поток логики записи не завершился.")
-            if self.prevent_minimize_thread and self.prevent_minimize_thread.is_alive():
-                 self.log_message("[AppGUI] Поток защиты от сворачивания все еще активен. Попытка остановить...")
-                 if hasattr(self, 'prevent_minimize_stop_event'): self.prevent_minimize_stop_event.set()
-                 self.prevent_minimize_thread.join(timeout=1.0)
+            
             self._save_app_settings()
             if self.master and self.master.winfo_exists(): self.master.destroy()
 
