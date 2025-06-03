@@ -4,9 +4,15 @@ import os
 import shutil
 
 APP_NAME = "VideoConfRecorder"
-MAIN_SCRIPT = "main.py"
-ICON_FILE = "app_icon.ico" 
-FFMPEG_SOURCE_PATH = "ffmpeg_bin/ffmpeg.exe" # Путь к вашему ffmpeg.exe относительно build.py
+MAIN_SCRIPT = "main.py" # Относительно build.py (который в /core)
+ICON_FILE_NAME = "app_icon.ico" 
+# Путь к иконке относительно build.py. Если build.py в /core, а иконка в корне проекта:
+ICON_FILE_PATH_RELATIVE_TO_BUILD = os.path.join("..", ICON_FILE_NAME) 
+
+FFMPEG_SOURCE_DIR_RELATIVE_TO_BUILD = os.path.join("..", "ffmpeg_bin") # Папка ffmpeg_bin в корне проекта
+FFMPEG_EXE_NAME = "ffmpeg.exe"
+FFMPEG_SOURCE_PATH_RELATIVE_TO_BUILD = os.path.join(FFMPEG_SOURCE_DIR_RELATIVE_TO_BUILD, FFMPEG_EXE_NAME)
+
 
 def get_version_string():
     """Генерирует строку версии на основе текущей даты."""
@@ -15,89 +21,107 @@ def get_version_string():
 
 def build():
     version_str = get_version_string()
-    dist_path = os.path.join("build_output", "dist") # Выходная папка для .exe
-    build_path = os.path.join("build_output", "build_temp") # Временная папка сборки
+    # Папки для сборки будут созданы относительно build.py (т.е. в /core/build_output)
+    # Если хотите в корне проекта, нужно будет ../build_output
+    base_build_dir = os.path.dirname(os.path.abspath(__file__)) # Папка, где лежит build.py (/core)
     
-    # Создаем выходные директории, если их нет
-    os.makedirs(dist_path, exist_ok=True)
-    os.makedirs(build_path, exist_ok=True)
+    # Выходные папки относительно корня проекта
+    project_root = os.path.dirname(base_build_dir) # /
+    dist_path_abs = os.path.join(project_root, "build_output", "dist") 
+    build_path_abs = os.path.join(project_root, "build_output", "build_temp")
+    
+    os.makedirs(dist_path_abs, exist_ok=True)
+    os.makedirs(build_path_abs, exist_ok=True)
 
     output_exe_name = f"{APP_NAME}_v{version_str}"
 
-    # Определяем, как добавлять ffmpeg.exe
-    # Для --onefile: PyInstaller сам распакует его во временную папку.
-    # Для --onedir: он будет скопирован в указанное место.
-    # Мы указываем, что ffmpeg.exe должен оказаться в подпапке ffmpeg_bin относительно основного .exe
-    # или просто рядом, если собираем в одну папку.
-    # os.pathsep это ';' для Windows, ':' для Linux/Mac
+    # Аргументы для PyInstaller
+    # Пути к скрипту, иконке, ffmpeg должны быть корректными относительно CWD PyInstaller.
+    # PyInstaller обычно запускается из папки, где лежит .spec файл (или где MAIN_SCRIPT).
+    # Мы будем запускать PyInstaller, находясь в папке /core.
+    # MAIN_SCRIPT - это 'main.py' (т.е. core/main.py)
+    # ICON_FILE_PATH_RELATIVE_TO_BUILD - это '../app_icon.ico'
+    # FFMPEG_SOURCE_PATH_RELATIVE_TO_BUILD - это '../ffmpeg_bin/ffmpeg.exe'
+
+    # --add-binary: <src_path_on_disk_host_sep>:<dest_path_in_bundle_bundle_sep>
+    # bundle_sep всегда '/', host_sep - os.pathsep (неправильно, это разделитель PATH)
+    # host_sep для путей это os.sep. Для --add-binary src - это путь на диске, dest - в бандле.
+    # ':' или ';' - разделитель между src и dest.
+    # Мы хотим, чтобы ffmpeg.exe и app_icon.ico оказались в корне бандла (рядом с основным .exe)
     
-    # Для --onefile, чтобы config.py нашел ffmpeg.exe после распаковки,
-    # он должен лежать в корне временной папки MEIPASS или в известной подпапке.
-    # Если FFMPEG_SOURCE_PATH = "ffmpeg_bin/ffmpeg.exe",
-    # то --add-binary "ffmpeg_bin/ffmpeg.exe:ffmpeg_bin"
-    # И в config.py путь будет os.path.join(application_path, "ffmpeg_bin", "ffmpeg.exe")
-
-    # Если мы хотим, чтобы ffmpeg.exe лежал просто рядом с основным .exe (в корне сборки)
-    # то --add-binary "ffmpeg_bin/ffmpeg.exe:."
-    # И в config.py путь будет os.path.join(application_path, "ffmpeg.exe")
-
-    # Выберем вариант, когда ffmpeg.exe копируется в корень сборки (рядом с основным .exe)
-    # Это проще для определения пути в config.py при --onefile (sys._MEIPASS)
-    add_binary_ffmpeg_arg = f"{FFMPEG_SOURCE_PATH}{os.pathsep}."
-
+    add_binary_ffmpeg_arg = f"{os.path.abspath(FFMPEG_SOURCE_PATH_RELATIVE_TO_BUILD)}{os.pathsep}."
+    add_binary_icon_arg = f"{os.path.abspath(ICON_FILE_PATH_RELATIVE_TO_BUILD)}{os.pathsep}."
+    # Если иконка используется через --icon, ее не всегда нужно добавлять через --add-binary,
+    # PyInstaller должен сам ее встроить. Но для --onefile, если мы хотим ее как отдельный файл в _MEIPASS,
+    # то --add-binary нужен. Пока оставим ее для --icon.
 
     pyinstaller_args = [
-        MAIN_SCRIPT,
+        MAIN_SCRIPT, # core/main.py
         '--name', output_exe_name,
         '--onefile',         
         '--windowed',        
-        '--icon', ICON_FILE,
-        '--distpath', dist_path,    # Папка для最终 .exe
-        '--workpath', build_path,   # Временная папка сборки
-        '--specpath', build_path,   # Куда помещать .spec файл
+        '--icon', os.path.abspath(ICON_FILE_PATH_RELATIVE_TO_BUILD), # Используем абсолютный путь для надежности
+        '--distpath', dist_path_abs,    
+        '--workpath', build_path_abs,   
+        '--specpath', build_path_abs, # .spec файл будет в build_temp в корне проекта
         '--clean',           
-        '--paths', '.', 
-        '--add-binary', add_binary_ffmpeg_arg, # Добавляем ffmpeg.exe
-        # '--add-binary', f"{ICON_FILE}{os.pathsep}.", # Если иконка нужна как отдельный файл данных
+        # '--paths', '.', # Путь к main.py уже указан, текущая папка (core) будет в sys.path
+        '--add-binary', add_binary_ffmpeg_arg, 
+        # Если иконка не подхватывается для отображения в GUI из ресурсов exe,
+        # можно попробовать добавить ее и так, чтобы она была в _MEIPASS:
+        '--add-data', f"{os.path.abspath(ICON_FILE_PATH_RELATIVE_TO_BUILD)}{os.pathsep}.",
     ]
     
-    hidden_imports = ['win32timezone', 'win32com.gen_py', 'psutil'] # Добавили psutil
+    hidden_imports = ['win32timezone', 'win32com.gen_py', 'psutil'] 
     for imp in hidden_imports:
         pyinstaller_args.extend(['--hidden-import', imp])
 
     print(f"Запуск PyInstaller для сборки {output_exe_name}.exe...")
     print(f"Аргументы: {' '.join(pyinstaller_args)}")
+    print(f"Рабочая директория для PyInstaller будет: {base_build_dir}") # /core
+
+    current_dir_before_pyinstaller = os.getcwd()
+    os.chdir(base_build_dir) # Переходим в /core, чтобы пути к MAIN_SCRIPT и т.д. были проще
 
     try:
         PyInstaller.__main__.run(pyinstaller_args)
-        final_exe_path = os.path.join(dist_path, output_exe_name, f"{output_exe_name}.exe") if not '--onefile' in pyinstaller_args else os.path.join(dist_path, f"{output_exe_name}.exe")
-        print(f"Сборка завершена успешно! Исполняемый файл: {os.path.abspath(final_exe_path)}")
+        # Итоговый .exe будет в dist_path_abs
+        final_exe_path = os.path.join(dist_path_abs, f"{output_exe_name}.exe")
+        print(f"Сборка завершена успешно! Исполняемый файл: {final_exe_path}")
     except SystemExit as e:
         print(f"PyInstaller завершился с ошибкой (SystemExit: {e}). Проверьте лог выше.")
     except Exception as e:
         print(f"Ошибка во время сборки PyInstaller: {e}")
+    finally:
+        os.chdir(current_dir_before_pyinstaller) # Возвращаемся в исходную директорию
 
-    # Удаляем .spec файл, который создается в build_path
-    spec_file_in_build_path = os.path.join(build_path, f"{output_exe_name}.spec")
+    # .spec файл создается в build_path_abs (т.е. в /build_output/build_temp в корне)
+    spec_file_in_build_path = os.path.join(build_path_abs, f"{output_exe_name}.spec")
     if os.path.exists(spec_file_in_build_path):
         try:
-            os.remove(spec_file_in_build_path)
-            print(f"Удален файл {spec_file_in_build_path}")
+            # os.remove(spec_file_in_build_path) # Не будем удалять, он может быть полезен
+            print(f"Файл .spec сохранен: {spec_file_in_build_path}")
         except Exception as e:
             print(f"Не удалось удалить файл {spec_file_in_build_path}: {e}")
     
-    # Очистка временной папки build, если нужно (после успешной сборки)
-    # if os.path.exists(build_path):
-    #     print(f"Удаление временной папки сборки: {build_path}")
-    #     shutil.rmtree(build_path)
+    # Очистка временной папки build_temp (workpath) - PyInstaller должен делать это сам с --clean
+    # if os.path.exists(build_path_abs):
+    # print(f"Удаление временной папки сборки: {build_path_abs}")
+    # shutil.rmtree(build_path_abs)
 
 
 if __name__ == '__main__':
-    if not os.path.exists(ICON_FILE):
-        print(f"Ошибка: Файл иконки '{ICON_FILE}' не найден."); exit(1)
-    if not os.path.exists(MAIN_SCRIPT):
-        print(f"Ошибка: Основной скрипт '{MAIN_SCRIPT}' не найден."); exit(1)
-    if not os.path.exists(FFMPEG_SOURCE_PATH):
-        print(f"Ошибка: Файл '{FFMPEG_SOURCE_PATH}' не найден. Поместите ffmpeg.exe в папку ffmpeg_bin.")
+    # Проверяем пути относительно build.py (который в /core)
+    abs_icon_path = os.path.abspath(ICON_FILE_PATH_RELATIVE_TO_BUILD)
+    abs_main_script_path = os.path.abspath(MAIN_SCRIPT)
+    abs_ffmpeg_path = os.path.abspath(FFMPEG_SOURCE_PATH_RELATIVE_TO_BUILD)
+
+    if not os.path.exists(abs_icon_path):
+        print(f"Ошибка: Файл иконки '{abs_icon_path}' не найден."); exit(1)
+    if not os.path.exists(abs_main_script_path):
+        print(f"Ошибка: Основной скрипт '{abs_main_script_path}' не найден."); exit(1)
+    if not os.path.exists(abs_ffmpeg_path):
+        print(f"Ошибка: Файл '{abs_ffmpeg_path}' не найден. Поместите ffmpeg.exe в {os.path.abspath(FFMPEG_SOURCE_DIR_RELATIVE_TO_BUILD)}.")
         exit(1)
+    
     build()
