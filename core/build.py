@@ -3,7 +3,7 @@ import datetime
 import os
 import shutil 
 
-APP_NAME = "VideoConfRecorder" # Базовое имя приложения
+APP_NAME = "VideoConfRecorder" 
 MAIN_SCRIPT_NAME = "main.py" 
 ICON_FILE_NAME = "app_icon.ico" 
 FFMPEG_EXE_NAME = "ffmpeg.exe"
@@ -15,50 +15,49 @@ ABS_MAIN_SCRIPT_PATH = os.path.join(BUILD_SCRIPT_DIR, MAIN_SCRIPT_NAME)
 ABS_ICON_FILE_PATH = os.path.join(PROJECT_ROOT_DIR, ICON_FILE_NAME) 
 ABS_FFMPEG_SOURCE_PATH = os.path.join(PROJECT_ROOT_DIR, FFMPEG_EXE_NAME) 
 
-
-# def get_version_string_with_time(): # Старая функция с временем
-#     now = datetime.datetime.now()
-#     return now.strftime("%y%m%d_%H%M")
-
-def get_date_version_string(): # Новая функция только с датой
+def get_date_version_string(): 
     now = datetime.datetime.now()
     return now.strftime("%y%m%d") # Формат ГГММДД
 
 def build():
-    # Имя .exe будет APP_NAME_ГГММДД.exe или просто APP_NAME.exe
-    # Если не хотите дату в имени, используйте output_exe_name = APP_NAME
-    # version_str = get_date_version_string()
-    # output_exe_name = f"{APP_NAME}_v{version_str}"
-    output_exe_name = APP_NAME # Используем статичное имя для .exe файла
+    version_str = get_date_version_string()
+    # Имя .exe файла будет включать дату как часть версии
+    output_exe_name = f"{APP_NAME}_v{version_str}" 
 
     dist_path_abs = os.path.join(PROJECT_ROOT_DIR, "dist") 
     build_temp_path_abs = os.path.join(PROJECT_ROOT_DIR, "build_temp_pyinstaller")
     
-    if os.path.exists(dist_path_abs):
-        print(f"Удаление старой папки dist: {dist_path_abs}")
-        shutil.rmtree(dist_path_abs)
+    # Не удаляем старую папку dist
+    # if os.path.exists(dist_path_abs):
+    #     print(f"Удаление старой папки dist: {dist_path_abs}")
+    #     shutil.rmtree(dist_path_abs)
+
+    # Удаляем старую временную папку сборки, если она есть, перед началом новой
     if os.path.exists(build_temp_path_abs):
         print(f"Удаление старой папки build_temp: {build_temp_path_abs}")
-        shutil.rmtree(build_temp_path_abs)
+        try:
+            shutil.rmtree(build_temp_path_abs)
+        except Exception as e_rm_old_build:
+            print(f"Не удалось удалить старую папку {build_temp_path_abs}: {e_rm_old_build}")
+
 
     os.makedirs(dist_path_abs, exist_ok=True)
-    # PyInstaller сам создаст workpath, если его нет
-    # os.makedirs(build_temp_path_abs, exist_ok=True) 
+    # PyInstaller сам создаст workpath (build_temp_path_abs), если его нет
 
     add_binary_ffmpeg_arg = f"{ABS_FFMPEG_SOURCE_PATH}{os.pathsep}."
     add_data_icon_arg = f"{ABS_ICON_FILE_PATH}{os.pathsep}." 
     
     pyinstaller_args = [
         MAIN_SCRIPT_NAME, 
-        '--name', output_exe_name,
+        '--name', output_exe_name, # Имя .exe файла теперь включает дату
         '--onefile',         
-        '--windowed', # <--- ВОЗВРАЩАЕМ WINDOWED, УБИРАЕМ CONSOLE
-        # '--debug', 'all', # Оставляем закомментированным, если отладка не нужна
+        '--windowed', # Используем --windowed, чтобы не было консоли
         '--icon', ABS_ICON_FILE_PATH, 
         '--distpath', dist_path_abs,    
         '--workpath', build_temp_path_abs,    
         '--specpath', build_temp_path_abs, 
-        # '--clean', # --clean удаляет кэш PyInstaller, а не workpath/distpath
+        # Опция --clean для PyInstaller удаляет его кэш, не workpath/distpath.
+        # Мы сами управляем workpath (build_temp_path_abs).
     ]
     
     pyinstaller_args.extend(['--add-binary', add_binary_ffmpeg_arg])
@@ -99,6 +98,7 @@ def build():
         traceback.print_exc()
     finally:
         os.chdir(current_dir_before_pyinstaller) 
+        # Удаляем временную папку сборки build_temp_path_abs после сборки
         if os.path.exists(build_temp_path_abs):
             print(f"Удаление временной папки сборки: {build_temp_path_abs}")
             try:
@@ -107,9 +107,8 @@ def build():
             except Exception as e_rm:
                 print(f"Не удалось удалить папку {build_temp_path_abs}: {e_rm}")
         else:
-            print(f"Временная папка сборки {build_temp_path_abs} не найдена для удаления (возможно, PyInstaller удалил ее сам).")
-
-        # .spec файл также удаляется вместе с build_temp_path_abs, если он там был
+            # Если папки нет (например, из-за ошибки PyInstaller на раннем этапе или если --clean ее удалил)
+            print(f"Временная папка сборки {build_temp_path_abs} не найдена для удаления или уже удалена.")
 
 
 if __name__ == '__main__':
