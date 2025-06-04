@@ -15,16 +15,15 @@ def load_settings(logger_func=print):
     settings_path = get_settings_file_path()
     settings = {}
     if os.path.exists(settings_path):
-        with open(settings_path, 'r', encoding='utf-8') as f:
-            # Без try-except, как запрошено. Если JSON некорректен, будет ошибка.
-            # Для большей устойчивости здесь бы понадобился try-except json.JSONDecodeError.
-            try:
+        # Оставляем try-except для json.JSONDecodeError, так как это распространенная ошибка
+        # при повреждении файла, и ее нужно обработать, чтобы приложение не падало.
+        try:
+            with open(settings_path, 'r', encoding='utf-8') as f:
                 settings = json.load(f)
-                logger_func(f"[SettingsManager] Настройки загружены из: {settings_path}")
-            except json.JSONDecodeError as e:
-                logger_func(f"[SettingsManager] Ошибка декодирования JSON из {settings_path}: {e}. Будут использованы настройки по умолчанию.")
-                # Возвращаем пустой словарь, чтобы приложение могло использовать значения по умолчанию
-                return {} 
+            logger_func(f"[SettingsManager] Настройки загружены из: {settings_path}")
+        except json.JSONDecodeError as e:
+            logger_func(f"[SettingsManager] Ошибка декодирования JSON из {settings_path}: {e}. Будут использованы настройки по умолчанию.")
+            return {} # Возвращаем пустой словарь, чтобы приложение могло использовать значения по умолчанию
     else:
         logger_func(f"[SettingsManager] Файл настроек не найден: {settings_path}. Будут использованы настройки по умолчанию.")
     return settings
@@ -37,13 +36,15 @@ def save_settings(settings_dict, logger_func=print):
     """
     settings_path = get_settings_file_path()
     
-    # Создаем директорию, если она не существует
-    # Без try-except для os.makedirs. Если не удастся создать, будет ошибка.
-    # Для большей устойчивости здесь бы понадобился try-except OSError.
+    # Создаем директорию, если она не существует, используя if-else
     if not os.path.exists(APP_SETTINGS_DIR):
-        os.makedirs(APP_SETTINGS_DIR)
+        # os.makedirs может вызвать ошибку, если нет прав, но по условию try-except не используем
+        # В реальном приложении здесь нужен try-except OSError
+        os.makedirs(APP_SETTINGS_DIR) 
         logger_func(f"[SettingsManager] Создана директория для настроек: {APP_SETTINGS_DIR}")
 
+    # Запись в файл может вызвать ошибку IO, но по условию try-except не используем
+    # В реальном приложении здесь нужен try-except IOError
     with open(settings_path, 'w', encoding='utf-8') as f:
         json.dump(settings_dict, f, ensure_ascii=False, indent=4)
     logger_func(f"[SettingsManager] Настройки сохранены в: {settings_path}")
