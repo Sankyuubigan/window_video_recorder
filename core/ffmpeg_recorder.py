@@ -143,11 +143,10 @@ class FFmpegRecorder:
         return command
 
     def _get_creation_flags(self):
-        # ИСПРАВЛЕНО: Добавляем CREATE_NO_WINDOW для скомпилированных приложений
         flags = 0
         if os.name == 'nt':
-            flags |= subprocess.CREATE_NEW_PROCESS_GROUP # 0x00000200
-            if getattr(sys, 'frozen', False): # Если приложение скомпилировано
+            flags |= subprocess.CREATE_NEW_PROCESS_GROUP 
+            if getattr(sys, 'frozen', False): 
                 flags |= 0x08000000  # subprocess.CREATE_NO_WINDOW
         return flags
 
@@ -183,13 +182,13 @@ class FFmpegRecorder:
                 self._add_error_message(f"Ошибка создания временного аудиофайла {i} (NamedTemporaryFile вернул None)", is_critical=True)
                 self._cleanup_temp_files(); return False, "; ".join(self.accumulated_error_messages)
 
-        current_creation_flags = self._get_creation_flags() # Получаем флаги здесь
+        current_creation_flags = self._get_creation_flags()
 
         video_process_started = False
         try: 
             video_cmd_list = self._build_ffmpeg_video_command(self.frame_grabber.width, self.frame_grabber.height, self.temp_video_file)
             self.logger(f"[FFmpegRecorder] Видео команда: {' '.join(video_cmd_list)}")
-            self.ffmpeg_video_process = subprocess.Popen(video_cmd_list, stdin=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=current_creation_flags, bufsize=0) # Используем флаги
+            self.ffmpeg_video_process = subprocess.Popen(video_cmd_list, stdin=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=current_creation_flags, bufsize=0) 
             if self.ffmpeg_video_process and self.ffmpeg_video_process.pid:
                 self.logger(f"[FFmpegRecorder] FFmpeg ВИДЕО процесс запущен (PID: {self.ffmpeg_video_process.pid}).")
                 video_process_started = True
@@ -210,7 +209,7 @@ class FFmpegRecorder:
                 if audio_cmd_list:
                     self.logger(f"[FFmpegRecorder] Аудио команда [{i}] для '{device_name}': {' '.join(audio_cmd_list)}")
                     try: 
-                        audio_proc = subprocess.Popen(audio_cmd_list, stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=current_creation_flags) # Используем флаги
+                        audio_proc = subprocess.Popen(audio_cmd_list, stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=current_creation_flags) 
                         if audio_proc and audio_proc.pid:
                             self.ffmpeg_audio_processes_list.append(audio_proc)
                             self.logger(f"[FFmpegRecorder] FFmpeg АУДИО процесс [{i}] запущен (PID: {audio_proc.pid}) для '{device_name}'.")
@@ -360,11 +359,12 @@ class FFmpegRecorder:
 
     def _stop_ffmpeg_process(self, process, process_name, timeout_graceful=3, timeout_signal=7, timeout_terminate=3, is_audio=False, audio_file_path_for_check=None):
         if not process: return
-        return_code = process.poll()
+        
+        return_code = process.poll() # Проверяем перед созданием потоков
         
         stderr_reader_thread_stop = None
         audio_stdout_thread = None
-        stop_stderr_event_local_stop = threading.Event() # Событие для остановки потоков чтения
+        stop_stderr_event_local_stop = threading.Event()
 
         if process.stderr and not process.stderr.closed:
             stderr_reader_thread_stop = threading.Thread(
@@ -385,7 +385,7 @@ class FFmpegRecorder:
             if process_name == "FFmpegVideo" and process.stdin and not process.stdin.closed:
                 self.logger(f"[FFmpegRecorder] Внимание: stdin {process_name} не закрыт до _stop_ffmpeg_process. Закрытие...")
                 try: process.stdin.close()
-                except: pass
+                except: pass # Ошибки закрытия stdin здесь не критичны для остановки процесса
             
             try: 
                 process.wait(timeout=timeout_graceful)
@@ -393,63 +393,65 @@ class FFmpegRecorder:
                 self.logger(f"[FFmpegRecorder] {process_name} завершился после wait({timeout_graceful}s) с кодом {return_code}.")
             except subprocess.TimeoutExpired:
                 self.logger(f"[FFmpegRecorder] {process_name} не завершился за {timeout_graceful}s. SIGINT/CTRL_C...")
+                process_terminated_by_signal = False
                 try: 
                     if os.name == 'nt': process.send_signal(signal.CTRL_C_EVENT)
                     else: process.send_signal(signal.SIGINT)
                     process.wait(timeout=timeout_signal) 
                     return_code = process.returncode
                     self.logger(f"[FFmpegRecorder] {process_name} завершился после сигнала с кодом {return_code}.")
+                    process_terminated_by_signal = True
                 except subprocess.TimeoutExpired:
                     self.logger(f"[FFmpegRecorder] {process_name} не завершился после сигнала за {timeout_signal}s. Terminate()...")
+                except Exception as e_signal: # Ловим ProcessLookupError и другие ошибки от send_signal/wait
+                    self.logger(f"[FFmpegRecorder] Исключение при отправке сигнала/ожидании {process_name}: {type(e_signal).__name__}: {e_signal}")
+                    return_code = process.poll() # Проверяем, не завершился ли процесс из-за ошибки
+                    if return_code is None: self.logger(f"[FFmpegRecorder] {process_name} все еще активен после ошибки сигнала.")
+                    process_terminated_by_signal = True # Считаем, что попытка была, и переходим к terminate/kill если надо
+
+                if not process_terminated_by_signal and process.poll() is None: # Если не завершился и все еще жив
+                    self.logger(f"[FFmpegRecorder] {process_name} все еще активен, используем terminate().")
                     process.terminate()
-                    try: process.wait(timeout=timeout_terminate) 
+                    try: 
+                        process.wait(timeout=timeout_terminate) 
+                        return_code = process.returncode
                     except subprocess.TimeoutExpired: 
-                        self.logger(f"[FFmpegRecorder] {process_name} убит (kill).")
-                        process.kill() # Дополнительный kill на всякий случай
-                    return_code = process.poll() 
-                    # Не добавляем здесь _add_error_message, сделаем это ниже на основе кода
-                    self.logger(f"[FFmpegRecorder] {process_name} завершен после kill/terminate с кодом {return_code}.")
-                except Exception as e_signal_wait: 
-                    # ИСПРАВЛЕНО: Логируем конкретную ошибку сигнала/ожидания
-                    self.logger(f"[FFmpegRecorder] Ошибка при попытке отправить сигнал/ожидать {process_name}: {e_signal_wait}")
-                    if process.poll() is None: # Если процесс все еще жив
-                        self.logger(f"[FFmpegRecorder] {process_name} все еще активен после ошибки сигнала, пытаемся kill()...")
-                        try:
-                            process.kill()
-                            process.wait(timeout=1) # Даем время на завершение после kill
-                        except Exception as e_kill_after_error:
-                            self.logger(f"[FFmpegRecorder] Ошибка при kill() {process_name} после ошибки сигнала: {e_kill_after_error}")
-                    return_code = process.poll() # Обновляем код возврата
+                        self.logger(f"[FFmpegRecorder] {process_name} не завершился после terminate за {timeout_terminate}s. Kill()...")
+                        # Перед kill убедимся, что он все еще жив
+                        if process.poll() is None:
+                            try:
+                                process.kill()
+                                process.wait(timeout=1) # Короткое ожидание после kill
+                            except Exception as e_kill:
+                                self.logger(f"[FFmpegRecorder] Исключение при kill/wait для {process_name}: {type(e_kill).__name__}: {e_kill}")
+                        return_code = process.poll() 
+                    self.logger(f"[FFmpegRecorder] {process_name} завершен после terminate/kill с кодом {return_code}.")
         else: 
             self.logger(f"[FFmpegRecorder] {process_name} уже был завершен с кодом {return_code}.")
         
-        # Останавливаем и ждем потоки чтения stderr/stdout
         stop_stderr_event_local_stop.set()
         if stderr_reader_thread_stop and stderr_reader_thread_stop.is_alive():
             stderr_reader_thread_stop.join(timeout=1.0)
         if audio_stdout_thread and audio_stdout_thread.is_alive():
             audio_stdout_thread.join(timeout=1.0)
         
-        # Логирование ошибки на основе финального return_code
-        if return_code is not None and return_code != 0:
-            is_killed_audio_ok = is_audio and return_code == 1 and \
+        final_return_code = process.poll() # Получаем самый актуальный код возврата
+        if final_return_code is not None and final_return_code != 0:
+            is_killed_audio_ok = is_audio and final_return_code == 1 and \
                                  audio_file_path_for_check and \
                                  os.path.exists(audio_file_path_for_check) and \
                                  os.path.getsize(audio_file_path_for_check) > 0
             if not is_killed_audio_ok:
-                # Stderr должен был быть уже выведен потоком _read_ffmpeg_pipe
-                err_msg = f"{process_name} завершился с ошибкой (код {return_code}). Проверьте лог stderr выше."
-                self._add_error_message(err_msg) # Не ставим is_critical=True здесь, это сделает вызывающий метод
+                err_msg = f"{process_name} завершился с ошибкой (код {final_return_code}). Проверьте лог stderr выше."
+                self._add_error_message(err_msg) 
             else: 
-                self.logger(f"[FFmpegRecorder] {process_name} (аудио) завершился с кодом {return_code}, но временный файл аудио {os.path.basename(audio_file_path_for_check) if audio_file_path_for_check else ''} существует. Не рассматривается как основная ошибка.")
+                self.logger(f"[FFmpegRecorder] {process_name} (аудио) завершился с кодом {final_return_code}, но временный файл аудио {os.path.basename(audio_file_path_for_check) if audio_file_path_for_check else ''} существует. Не рассматривается как основная ошибка.")
         
-        # Закрываем пайпы вручную, если они еще не закрыты
-        if process.stderr and not process.stderr.closed:
-            try: process.stderr.close()
-            except: pass
-        if is_audio and process.stdout and not process.stdout.closed:
-            try: process.stdout.close()
-            except: pass
+        # Закрываем пайпы, если они все еще открыты и принадлежат этому процессу
+        for pipe_to_close in [process.stderr, process.stdout if is_audio else None]:
+            if pipe_to_close and hasattr(pipe_to_close, 'closed') and not pipe_to_close.closed:
+                try: pipe_to_close.close()
+                except: pass
         
     def _mux_files(self):
         self.logger("[FFmpegRecorder] Попытка объединения временных файлов...")
@@ -463,7 +465,6 @@ class FFmpegRecorder:
         
         mux_successful = False
         try:
-            # Используем те же creationflags, что и для записи, чтобы скрыть окно ffmpeg при сборке
             current_creation_flags = self._get_creation_flags()
             mux_process_result = subprocess.run(mux_cmd_list, capture_output=True, text=True, check=False, 
                                                 encoding='utf-8', errors='ignore', creationflags=current_creation_flags)
@@ -561,19 +562,27 @@ class FFmpegRecorder:
                 self._stop_ffmpeg_process(audio_proc, f"FFmpegAudio[{i}]", timeout_graceful=2, timeout_signal=10, timeout_terminate=3, is_audio=True, audio_file_path_for_check=temp_file_to_check)
         self.ffmpeg_audio_processes_list = []
         
-        mux_successful = False # Инициализируем перед блоком mux
-        if not self.accumulated_error_messages or not any("Ошибка объединения файлов" in msg for msg in self.accumulated_error_messages):
+        mux_successful = False 
+        # Проверяем, были ли ошибки ДО объединения. Если да, и они не связаны с mux, то mux не будет выполнен
+        # Но если ошибки были именно от mux, то это уже обработано в _mux_files
+        can_try_muxing = True
+        for msg in self.accumulated_error_messages:
+            if "Ошибка объединения файлов" in msg or "Исключение при выполнении команды объединения" in msg:
+                # Если ошибка mux уже была, то не нужно пытаться снова или добавлять "неизвестную причину"
+                can_try_muxing = False; break 
+        
+        if can_try_muxing:
              self.logger("[FFmpegRecorder] Начало объединения файлов...")
              mux_successful = self._mux_files() 
              if not mux_successful:
-                 mux_error_already_logged = any("Ошибка объединения файлов" in msg or "Исключение при выполнении команды объединения" in msg for msg in self.accumulated_error_messages)
+                 # Добавляем общую ошибку mux, только если _mux_files сам ее не добавил
+                 mux_error_already_logged = any("Ошибка объединения файлов" in m or "Исключение при выполнении команды объединения" in m for m in self.accumulated_error_messages)
                  if not mux_error_already_logged:
                      self._add_error_message("Объединение временных файлов не удалось (неизвестная причина).", is_critical=True)
              elif mux_successful and self.accumulated_error_messages: 
-                 # Если есть ошибки, но mux успешен, логируем это
                  self.logger(f"[FFmpegRecorder] Объединение файлов успешно, но ранее возникли сообщения: {'; '.join(self.accumulated_error_messages)}")
         else:
-            self.logger("[FFmpegRecorder] Объединение файлов пропущено из-за предыдущих критических ошибок.")
+            self.logger("[FFmpegRecorder] Объединение файлов пропущено из-за предыдущих критических ошибок или ошибок mux.")
             
         self._cleanup_temp_files()
         self.is_recording = False 
